@@ -4,6 +4,8 @@ var io    = require('socket.io')(http);
 
 var port  = process.env.PORT || 8080;
 
+var idMapping = [];
+
 app.all('/*', function(req, res, next) {
   res.header("Access-Control-Allow-Origin", req.headers.origin || "*");
   res.header("Access-Control-Allow-Headers", "X-Requested-With, Content-Type");
@@ -18,52 +20,55 @@ app.get('/', function(req, res){
 // usernames which are currently connected to the chat
 var usernames = {};
 
+var getSocketIdForUser = function(id) {
+  var socketIdToReturn = false;
+  idMapping.map(function(user) {
+    if (user.id == id) {
+      socketIdToReturn = user.socketId;
+    }
+  });
+  return socketIdToReturn;
+}
+
 io.on('connection', function (socket) {
+
   var addedUser = false;
 
+  socket.on('register-user', function(id) {
+    var userFound = false;
+    idMapping.map(function(user) {
+      if (user.id === id) {
+        user.socketId = socket.id;
+        userFound = true;
+      }
+    });
+    if (!userFound) {
+      var newUser = {
+        id: id,
+        socketId: socket.id
+      };
+      idMapping.push(newUser);
+    }
+  });
+
   socket.on('new message', function (data) {
-    socket.broadcast.emit('new message', {
-      username: socket.username,
-      content: data
-    });
-  });
-
-  socket.on('add user', function (username) {
-    // we store the username in the socket session for this client
-    socket.username = username;
-    // add the client's username to the global list
-    usernames[username] = username;
-    addedUser = true;
-    // echo globally (all clients) that a person has connected
-    socket.broadcast.emit('user joined', {
-      username: socket.username
-    });
-  });
-
-  // when the client emits 'typing', we broadcast it to others
-  socket.on('typing', function () {
-    socket.broadcast.emit('typing', {
-      username: socket.username
-    });
-  });
-
-  // when the client emits 'stop typing', we broadcast it to others
-  socket.on('stop typing', function () {
-    socket.broadcast.emit('stop typing', {
-      username: socket.username
-    });
+    var toSocketId = getSocketIdForUser(data.toUserId);
+    if (toSocketId) {
+      io.to(toSocketId).emit('new message', data);
+      io.to(socket.id).emit('new message', data);
+    } else {
+      io.to(socket.id).emit('new message', data);
+    }
   });
 
   socket.on('disconnect', function () {
-    // remove the username from global usernames list
-    if (addedUser) {
-      delete usernames[socket.username];
-
-      // echo globally that this client has left
-      socket.broadcast.emit('user left', {
-        username: socket.username
-      });
-    }
+    var indexToRemove = null;
+    idMapping.map(function(user, index) {
+      if (user.socketId == socket.id) {
+        indexToRemove = index;
+      }
+    });
+    idMapping.splice(indexToRemove, 1);
   });
 
 });
